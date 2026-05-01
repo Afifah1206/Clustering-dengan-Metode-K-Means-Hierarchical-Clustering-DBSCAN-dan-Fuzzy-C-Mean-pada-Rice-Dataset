@@ -1,0 +1,2 @@
+# Clustering-dengan-Metode-K-Means-Hierarchical-Clustering-DBSCAN-dan-Fuzzy-C-Mean-pada-Rice-Dataset
+Comparative analysis of K-Means, Hierarchical Clustering, DBSCAN, and Fuzzy C-Means on the Rice (Cammeo &amp; Osmancik) Dataset from UCI ML Repository. Includes preprocessing, clustering implementation, and evaluation using Silhouette Score. K-Means (k=2) achieved the best result with a score of 0.4099.
