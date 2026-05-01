@@ -1,0 +1,393 @@
+---
+title: "Clustering dengan Metode K-Means, Hierarchical Clustering, DBSCAN dan Fuzzy C-Mean"
+author: "Afifah (24031554202)"
+date: "2026-04-25"
+output: html_document
+---
+
+# Import dan Deskripsi Data
+```{r}
+url <- "https://archive.ics.uci.edu/static/public/545/data.csv"
+data <- read.csv(url, header = TRUE)
+data
+```
+
+```{r}
+table(data$Class)
+```
+
+
+```{r}
+library(psych)
+describe(data)
+```
+
+```{r}
+summary(data)
+```
+Dataset Rice terdiri dari 3810 observasi dengan 7 variabel numerik dan 1 variabel kategorik (Class). Variabel numerik merepresentasikan karakteristik morfologi butir beras, yaitu Area, Perimeter, Major Axis Length, Minor Axis Length, Eccentricity, Convex Area, dan Extent, sedangkan Class menunjukkan dua jenis beras, yaitu Cammeo dan Osmancik. Hasil statistik deskriptif menunjukkan bahwa variabel seperti Area (mean = 12667.73), Perimeter (mean = 454.24), dan Major Axis Length (mean = 188.78) memiliki variasi yang cukup untuk membedakan karakteristik butir beras, sementara Eccentricity (mean = 0.89; sd = 0.02) relatif stabil dan menunjukkan bentuk butir yang cenderung seragam. Secara umum, nilai mean yang dekat dengan median serta skewness yang mendekati nol menunjukkan distribusi data cenderung simetris tanpa penyimpangan ekstrem. Hal ini menunjukkan bahwa dataset memiliki kualitas yang baik untuk analisis clustering karena didominasi variabel numerik kontinu dengan variasi yang cukup untuk membentuk pola pengelompokan.
+
+Meskipun dataset Rice (Cammeo and Osmancik) memiliki label kelas (Class) yang menunjukkan jenis beras, dataset ini tetap dapat digunakan untuk analisis clustering karena proses clustering dilakukan tanpa memanfaatkan label tersebut. Dalam penelitian ini, variabel Class tidak digunakan saat pembentukan cluster, melainkan hanya variabel numerik yang merepresentasikan karakteristik morfologi butir beras. Dengan demikian, proses pengelompokan tetap bersifat unsupervised karena algoritma membentuk cluster murni berdasarkan kemiripan pola data, tanpa mengetahui kategori asli sebelumnya. Label Class hanya digunakan setelah proses clustering selesai, yaitu sebagai pembanding untuk membantu mengevaluasi apakah cluster yang terbentuk memiliki kesesuaian dengan pengelompokan aktual.
+
+# Preprocessing Data
+## Cek Missing Value
+```{r}
+colSums(is.na(data))
+```
+Pemeriksaan missing value menunjukkan bahwa seluruh variabel pada dataset memiliki nilai kosong sebesar 0, sehingga dapat disimpulkan bahwa dataset tidak mengandung missing value.
+
+## Cek Data Duplikat
+```{r}
+sum(duplicated(data))
+```
+Pemeriksaan duplikasi data menunjukkan bahwa tidak terdapat data yang terduplikasi dalam dataset (jumlah duplikat = 0). Hal ini berarti setiap observasi bersifat unik, sehingga tidak diperlukan proses penghapusan data duplikat sebelum dilakukan analisis lebih lanjut.
+
+## Scaling Data
+```{r}
+# Ambil fitur (tanpa kolom label)
+data_num <- data[, -ncol(data)]
+
+# Standardisasi - Z-Score
+data_scaled <- scale(data_num)
+
+# Lihat hasil
+head(data_scaled)
+```
+
+```{r}
+# Mean harus ~0
+colMeans(data_scaled)
+
+# SD harus ~1
+apply(data_scaled, 2, sd)
+```
+Dataset kemudian melalui tahap standarisasi menggunakan metode Z-score dengan menghilangkan kolom label (Class) dan hanya menggunakan variabel numerik. Hasil standarisasi menunjukkan bahwa seluruh variabel memiliki nilai rata-rata yang mendekati 0 dan standar deviasi sebesar 1. Hal ini menandakan bahwa proses standarisasi telah berhasil dilakukan, sehingga setiap variabel berada pada skala yang sama dan siap digunakan dalam analisis clustering tanpa adanya dominasi dari variabel tertentu.
+
+## Cek Outlier
+```{r}
+boxplot(data_scaled, 
+        main = "Boxplot untuk Deteksi Outlier", 
+        col = "lightblue", 
+        las = 2)
+```
+Berdasarkan boxplot hasil standarisasi data, terlihat bahwa sebagian besar variabel memiliki beberapa titik yang berada di luar batas whisker, yang mengindikasikan adanya outlier. Outlier cukup terlihat pada variabel seperti Minor Axis Length, Eccentricity, dan Convex Area, baik pada sisi nilai tinggi maupun rendah. Meskipun demikian, keberadaan outlier ini masih dalam jumlah yang relatif kecil dibandingkan keseluruhan data. Karena metode clustering seperti K-Means dan Hierarchical cukup sensitif terhadap outlier, keberadaan nilai ekstrem ini perlu diperhatikan, namun tidak dilakukan penghapusan karena outlier tersebut masih merepresentasikan variasi alami dari data.
+
+# Visualisasi Awal
+```{r}
+# hitung warna berdasarkan density
+dens_col <- densCols(data_scaled[, "Area"], data_scaled[, "Perimeter"])
+
+plot(data_scaled[, "Area"], data_scaled[, "Perimeter"],
+     col = dens_col,
+     pch = 19,
+     xlab = "Area (scaled)",
+     ylab = "Perimeter (scaled)",
+     main = "Density-Based Scatter Plot (Gradient)")
+```
+
+
+
+
+
+
+```{r}
+pairs(data_scaled,
+      col = rgb(0.4, 0.6, 0.9, 0.5),
+      pch = 19,
+      main = "Scatter Plot Matrix")
+```
+
+```{r}
+#install.packages("GGally")
+library(GGally)
+
+df_plot <- data.frame(data_scaled)
+
+ggpairs(df_plot,
+        lower = list(continuous = wrap("points", alpha = 0.4, color = "skyblue")),
+        upper = list(continuous = wrap("cor", size = 3)),
+        diag = list(continuous = "densityDiag"))
+```
+Visualisasi awal menggunakan scatter plot matrix menunjukkan hubungan antar variabel numerik dalam dataset. Terlihat bahwa sebagian besar variabel seperti Area, Perimeter, Major Axis Length, dan Convex Area memiliki korelasi yang sangat kuat dan positif, yang ditunjukkan oleh pola titik yang membentuk garis linier. Sebaliknya, variabel Extent menunjukkan korelasi yang sangat lemah terhadap variabel lainnya, sehingga kontribusinya dalam pembentukan cluster cenderung kecil. Selain itu, pola sebaran data menunjukkan kecenderungan hubungan linier pada banyak pasangan variabel, yang mengindikasikan adanya redundansi informasi antar fitur. Secara umum, visualisasi ini memberikan gambaran bahwa data memiliki struktur yang cukup jelas untuk dilakukan analisis clustering.
+
+# Metode K-Means
+## Menentukan Center dengan Elbow Method
+```{r}
+wss <- vector()
+
+for (i in 1:10) {
+  wss[i] <- kmeans(data_scaled, centers = i, nstart = 10)$tot.withinss
+}
+
+plot(1:10, wss, type = "b",
+     xlab = "Jumlah Cluster (K)",
+     ylab = "WSS",
+     main = "Elbow Method")
+```
+Berdasarkan visualisasi Elbow Method, jumlah cluster optimal yang dipilih adalah K = 3. Hal ini ditunjukkan oleh pola penurunan nilai WSS (Within-Cluster Sum of Squares) yang sangat drastis dari K = 1 hingga K = 3, kemudian mulai melandai secara signifikan pada K = 4 dan seterusnya. Titik perubahan dari penurunan curam menuju landai inilah yang disebut sebagai titik elbow, dan pada grafik ini titik tersebut paling jelas terlihat di K = 3. Penambahan cluster setelah titik ini tidak lagi memberikan peningkatan kualitas clustering yang berarti.
+
+
+## Model K-Means C = 3
+```{r}
+set.seed(123)
+kmeans_model <- kmeans(data_scaled, centers = 3, nstart = 25)
+
+kmeans_cluster <- kmeans_model$cluster
+
+table(kmeans_cluster)
+```
+Metode K-Means diterapkan dengan jumlah cluster sebanyak 3 dan nilai nstart sebesar 25 untuk meningkatkan kestabilan hasil. Hasil clustering menunjukkan bahwa data terbagi menjadi tiga kelompok dengan jumlah anggota masing-masing sebesar 1509, 1249, dan 1052 observasi. Hal ini menunjukkan bahwa distribusi data cukup seimbang antar cluster, meskipun terdapat sedikit perbedaan jumlah anggota pada setiap kelompok.
+
+```{r}
+kmeans_model$centers
+```
+Hasil clustering menggunakan K-Means dengan K = 3 menghasilkan tiga kelompok utama. Cluster pertama merepresentasikan beras dengan ukuran besar dan bentuk lonjong. Cluster kedua menunjukkan beras dengan ukuran sedang dan bentuk yang lebih kompak. Sementara itu, cluster ketiga terdiri dari beras dengan ukuran kecil. Perbedaan utama antar cluster dipengaruhi oleh variabel Area, Perimeter, dan Major Axis Length yang menunjukkan ukuran fisik beras.
+
+## Visualisasi Hasil Clustering K-Means C = 3
+```{r}
+#install.packages("factoextra")
+library(factoextra)
+
+fviz_cluster(kmeans_model,
+             data = data_scaled,
+             geom = "point",
+             ellipse.type = "convex",
+             main = "Visualisasi Hasil Clustering K-Means K=3",
+             ggtheme = theme_minimal())
+```
+Visualisasi hasil K-Means dengan jumlah cluster sebanyak 3 menunjukkan bahwa data terbagi menjadi tiga kelompok utama yang relatif terpisah dalam ruang dua dimensi. Meskipun demikian, masih terdapat beberapa area overlap antar cluster, terutama pada bagian tengah distribusi data. Hal ini mengindikasikan bahwa pemisahan antar cluster belum optimal. Jika dibandingkan dengan hasil K-Means dengan 2 cluster, penggunaan 3 cluster cenderung menghasilkan fragmentasi data, di mana satu cluster berisi campuran dari karakteristik yang tidak homogen. Temuan ini juga konsisten dengan nilai Silhouette Score yang lebih rendah.
+
+## Evaluasi K-Means C = 3
+```{r}
+#Evaluasi Internal (Silhouette Score)
+library(cluster)
+
+# hitung silhouette
+sil_kmeans <- mean(silhouette(kmeans_cluster, dist(data_scaled))[,3])
+
+sil_kmeans
+```
+Evaluasi menggunakan Silhouette Score menghasilkan nilai sebesar 0.3087, yang menunjukkan bahwa kualitas cluster berada pada kategori sedang. Hal ini mengindikasikan bahwa pemisahan antar cluster sudah terbentuk, namun masih terdapat kemungkinan overlap antar kelompok sehingga struktur cluster belum sepenuhnya optimal.
+```{r}
+#Evaluasi Eksternal (Perbandingan cluster vs label asli)
+table(kmeans_cluster, data$Class)
+```
+Pada dataset asli, terdapat 1630 data Cammeo dan 2180 data Osmancik. Namun, Cluster 3 masih berisi campuran kedua kelas (161 Cammeo dan 891 Osmancik), sehingga tidak merepresentasikan satu kelas tertentu secara jelas. Hal ini menunjukkan bahwa 3 cluster menyebabkan fragmentasi pada data, terutama pada kelas Osmancik yang terpecah ke dalam dua cluster. penggunaan 3 cluster menghasilkan pemisahan yang kurang optimal karena adanya overlap dan pembagian kelas yang tidak tegas.
+
+## Model K-Means C = 2
+```{r}
+kmeans_2model <- kmeans(data_scaled, centers = 2, nstart = 25)
+kmeans_2 <- kmeans_2model$cluster
+table(kmeans_2)
+```
+Hasil penerapan K-Means dengan jumlah cluster sebanyak 2 menunjukkan bahwa data terbagi menjadi dua kelompok dengan jumlah anggota masing-masing sebesar 1576 dan 2234 observasi. Distribusi ini menunjukkan bahwa salah satu cluster memiliki jumlah data yang lebih dominan.
+```{r}
+kmeans_2model$centers
+```
+Cluster 1 memiliki nilai positif pada sebagian besar variabel seperti Area, Perimeter, dan Major Axis Length, yang mengindikasikan ukuran butir beras cenderung lebih besar dari rata-rata. Sebaliknya, cluster 2 memiliki nilai negatif pada sebagian besar variabel tersebut, yang menunjukkan ukuran butir beras relatif lebih kecil dari rata-rata. Perbedaan ini mengindikasikan bahwa K-Means dengan 2 cluster mampu memisahkan data berdasarkan ukuran dan bentuk morfologi beras secara cukup jelas.
+
+## Visualisasi Hasil Clustering K-Means C = 2
+```{r}
+fviz_cluster(kmeans_2model,
+             data = data_scaled,
+             geom = "point",
+             ellipse.type = "convex",
+             main = "Visualisasi Hasil Clustering K-Means K=2",
+             ggtheme = theme_minimal())
+```
+Visualisasi hasil K-Means dengan 2 cluster menunjukkan bahwa data terbagi secara jelas menjadi dua kelompok utama, terutama sepanjang Dimensi 1 yang menjelaskan sebagian besar variasi data. Cluster pertama terdistribusi pada sisi kiri, sedangkan cluster kedua berada pada sisi kanan, dengan batas pemisahan yang relatif tegas dan hanya sedikit overlap di area tengah. Pola ini menunjukkan bahwa struktur alami data memang terdiri dari dua kelompok yang berbeda, sehingga K-Means dengan dua cluster mampu merepresentasikan data secara optimal. 
+
+## Evaluasi K-Means C = 2
+```{r}
+#Evaluasi Internal (Silhouette Score)
+k_means_sil_2 <- mean(silhouette(kmeans_2, dist(data_scaled))[,3])
+k_means_sil_2
+```
+Evaluasi menggunakan Silhouette Score pada K-Means dengan 2 cluster menghasilkan nilai sebesar 0.4100, yang menunjukkan kualitas cluster yang lebih baik dibandingkan dengan penggunaan 3 cluster sebelumnya. Nilai ini mengindikasikan bahwa pemisahan antar cluster sudah cukup jelas dengan tingkat overlap yang lebih rendah, sehingga K-Means dengan 2 cluster dapat dianggap lebih optimal dalam merepresentasikan struktur data.
+
+```{r}
+#Evaluasi Eksternal (Perbandingan cluster vs label asli)
+table(kmeans_2, data$Class)
+```
+Hasil evaluasi eksternal menunjukkan bahwa K-Means dengan 2 cluster mampu memisahkan data dengan cukup baik dan sejalan dengan distribusi kelas asli. Pada dataset asli, jumlah kelas Cammeo sebanyak 1630 observasi dan Osmancik sebanyak 2180 observasi. Hasil clustering menunjukkan bahwa Cluster 1 didominasi oleh Cammeo (1437 data dari total 1630), sedangkan Cluster 2 didominasi oleh Osmancik (2041 data dari total 2180). Hal ini berarti sebagian besar data berhasil dikelompokkan sesuai dengan label aslinya, dengan tingkat kesesuaian yang cukup tinggi. Meskipun masih terdapat sejumlah kecil data yang tertukar antar cluster, secara keseluruhan hasil ini menunjukkan bahwa K-Means dengan 2 cluster mampu merepresentasikan struktur asli data dengan baik dan konsisten terhadap distribusi kelas yang ada.
+
+# Metode Hierarchical Clustering
+## Hitung jarak antar data
+```{r}
+dist_matrix <- dist(data_scaled, method = "euclidean")
+
+dist_matrix
+```
+
+```{r}
+hc <- hclust(dist_matrix, method = "ward.D2")
+
+plot(hc, main = "Dendrogram Hierarchical Clustering")
+rect.hclust(hc, k = 2, border = "red")
+```
+
+```{r}
+hc_cluster2 <- cutree(hc, k = 2)
+table(hc_cluster2)
+```
+Dendrogram hasil Hierarchical Clustering dengan metode Ward menunjukkan bahwa data dapat dipotong menjadi 2 cluster utama pada ketinggian tertentu (ditandai dengan garis kotak merah). Terlihat adanya pemisahan yang cukup jelas antara dua kelompok besar sebelum seluruh data bergabung pada level yang lebih tinggi, sehingga mengindikasikan bahwa struktur alami data cenderung membentuk dua cluster utama. Hasil pemotongan dendrogram menghasilkan dua cluster dengan jumlah anggota masing-masing sebesar 1483 dan 2327 observasi. Perbedaan jumlah ini sesuai dengan distribusi data asli yang tidak seimbang, sehingga pemilihan jumlah cluster sebanyak 2 dapat dianggap sesuai dan representatif terhadap struktur data.
+
+## Visualisasi Hasil Hierarchical Clustering
+```{r}
+fviz_cluster(list(data = data_scaled, cluster = hc_cluster2),
+             geom = "point",
+             ellipse.type = "convex",
+             main = "Visualisasi Hierarchical Clustering (K = 2)",
+             ggtheme = theme_minimal())
+```
+Visualisasi hasil Hierarchical Clustering dengan dua cluster menunjukkan bahwa data terbagi menjadi dua kelompok utama yang relatif sesuai dengan struktur alami data. Namun, dibandingkan dengan metode K-Means, batas antar cluster pada metode ini terlihat kurang tegas dan terdapat overlap yang lebih besar di area tengah. Hal ini menunjukkan bahwa meskipun Hierarchical Clustering mampu mengidentifikasi pola umum dalam data, tingkat pemisahan antar cluster tidak seoptimal K-Means. 
+
+## Evaluasi Hierarchical Clustering
+```{r}
+#Evaluasi Eksternal (Perbandingan cluster vs label asli)
+table(hc_cluster2, data$Class)
+```
+Hasil evaluasi eksternal pada Hierarchical Clustering dengan 2 cluster menunjukkan bahwa pemisahan data cukup baik dan sejalan dengan label asli. Cluster 1 didominasi oleh kelas Cammeo (1356 data), sedangkan Cluster 2 didominasi oleh kelas Osmancik (2053 data). Jika dibandingkan dengan distribusi data asli (1630 Cammeo dan 2180 Osmancik), sebagian besar data telah berhasil dikelompokkan dengan benar, meskipun masih terdapat sejumlah kecil data yang tertukar antar cluster. Secara keseluruhan, hasil ini menunjukkan bahwa Hierarchical Clustering mampu merepresentasikan struktur data dengan baik dan menghasilkan pemisahan yang cukup jelas antara kedua kelas.
+
+```{r}
+#Evaluasi Internal (Silhouette Score)
+sil_hc2 <- mean(silhouette(hc_cluster2, dist_matrix)[,3])
+
+sil_hc2
+```
+Evaluasi menggunakan Silhouette Score pada Hierarchical Clustering dengan 2 cluster menghasilkan nilai sebesar 0.3955, yang menunjukkan kualitas cluster yang cukup baik. Nilai ini mengindikasikan bahwa pemisahan antar cluster sudah cukup jelas dengan tingkat overlap yang relatif rendah. Jika dibandingkan dengan K-Means, nilai ini sedikit lebih rendah dari K-Means dengan 2 cluster, namun masih menunjukkan bahwa metode Hierarchical Clustering mampu menghasilkan struktur cluster yang cukup representatif terhadap data.
+
+# Metode DBSCAN
+## Tentukan epsilon (ε) dengan kNN distance
+```{r}
+library(dbscan)
+minPts <- 8
+kNNdistplot(data_scaled, k = minPts)
+abline(h = 0.5, col = "red", lty = 2)
+```
+Nilai parameter epsilon (ε) ditentukan menggunakan grafik k-distance dengan melihat titik, yaitu titik di mana terjadi perubahan kenaikan jarak secara signifikan. Berdasarkan visualisasi, titik berada pada kisaran nilai 0.7 hingga 0.8. Oleh karena itu, nilai ε yang digunakan dalam model DBSCAN ditetapkan sebesar 0.8 karena mampu menangkap struktur kepadatan data secara optimal tanpa menghasilkan terlalu banyak noise.
+
+## Tentukan parameter MinPts
+```{r}
+db_model <- dbscan(data_scaled, eps = 0.8, minPts = 8)
+db_cluster <- db_model$cluster
+
+table(db_cluster)
+```
+Hasil DBSCAN dengan parameter ε = 0.7-0.8 dan MinPts = 8 menunjukkan bahwa sebagian besar data (3754 observasi) tergabung dalam satu cluster besar, sementara hanya 56 observasi yang teridentifikasi sebagai noise. Sehingga, DBSCAN tidak mampu memisahkan data menjadi beberapa cluster yang bermakna. Dibandingkan dengan metode K-Means dan Hierarchical Clustering, performa DBSCAN pada parameter ini kurang optimal dalam menangkap struktur alami data.
+
+## Visualisasi Hasil DBSCAN
+```{r}
+fviz_cluster(db_model,
+             data = data_scaled,
+             stand = FALSE,
+             geom = "point",
+             main = "Visualisasi Hasil Clustering DBSCAN",
+             ggtheme = theme_minimal())
+```
+Visualisasi hasil DBSCAN menunjukkan bahwa metode ini tidak mampu memisahkan data ke dalam beberapa cluster yang jelas. Hampir seluruh observasi tergabung dalam satu cluster utama, sementara hanya sebagian kecil titik teridentifikasi sebagai noise. Hal ini mengindikasikan bahwa struktur data memiliki kepadatan yang relatif homogen, sehingga DBSCAN kesulitan menemukan batas kepadatan yang cukup kuat untuk membentuk cluster terpisah. Dengan demikian, DBSCAN dinilai kurang sesuai untuk dataset ini dibandingkan metode clustering lain seperti K-Means.
+
+## Evaluasi DBSCAN
+```{r}
+if(length(unique(db_cluster[db_cluster != 0])) > 1){
+  data_no_noise <- data_scaled[db_cluster != 0, ]
+  cluster_no_noise <- db_cluster[db_cluster != 0]
+  sil_db <- mean(silhouette(cluster_no_noise, dist(data_no_noise))[,3])
+} else {
+  sil_db <- NA
+}
+sil_db
+```
+Evaluasi menggunakan Silhouette Score tidak dapat dilakukan pada hasil DBSCAN karena model hanya menghasilkan satu cluster setelah mengabaikan data noise. Silhouette Score memerlukan minimal dua cluster untuk mengukur kualitas pemisahan antar kelompok. Hal ini menunjukkan bahwa parameter yang digunakan pada DBSCAN belum mampu menghasilkan struktur cluster yang optimal
+
+# Metode Fuzzy C-Means
+## Jalankan Fuzzy C-Means
+```{r}
+library(e1071)
+fcm_model <- cmeans(data_scaled, centers = 2, m = 2)
+
+# hasil cluster (hard assignment)
+fcm_cluster <- fcm_model$cluster
+
+table(fcm_cluster)
+```
+Hasil clustering menggunakan metode Fuzzy C-Means dengan jumlah cluster sebanyak 2 menunjukkan bahwa data terbagi menjadi dua kelompok dengan jumlah masing-masing 2199 dan 1611 observasi. Distribusi ini relatif sejalan dengan distribusi kelas asli, sehingga menunjukkan bahwa metode ini mampu menangkap struktur data dengan baik. Berbeda dengan K-Means, Fuzzy C-Means menggunakan pendekatan soft clustering, di mana setiap data memiliki derajat keanggotaan pada masing-masing cluster. Hal ini memungkinkan model untuk lebih fleksibel dalam menangani data yang berada pada batas antar cluster, sehingga memberikan representasi yang lebih realistis terhadap struktur data yang memiliki overlap.
+
+## Visualisasi Hasil Fuzzy C-Means
+```{r}
+fviz_cluster(list(data = data_scaled, cluster = fcm_cluster),
+             main = "Fuzzy C-Means Clustering",
+             geom = "point",
+             ellipse.type = "convex")
+```
+Visualisasi hasil Fuzzy C-Means menunjukkan bahwa data terbagi menjadi dua cluster utama yang terpisah cukup jelas, terutama sepanjang Dimensi 1 yang menjelaskan sebagian besar variasi data. Meskipun demikian, terdapat area overlap di bagian tengah, yang mengindikasikan adanya data yang berada pada batas antar cluster. Hal ini sejalan dengan konsep soft clustering pada Fuzzy C-Means, di mana setiap data tidak hanya menjadi anggota satu cluster secara mutlak, tetapi memiliki derajat keanggotaan pada masing-masing cluster. Dengan demikian, metode ini mampu memberikan representasi yang lebih fleksibel dan realistis terhadap struktur data dibandingkan metode clustering berbasis hard assignment.
+
+## Lihat Derajat Keanggotaan
+```{r}
+head(fcm_model$membership)
+```
+Matriks membership pada Fuzzy C-Means menunjukkan derajat keanggotaan setiap data terhadap masing-masing cluster. Nilai keanggotaan berada pada rentang 0 hingga 1, di mana semakin mendekati 1 menunjukkan tingkat keanggotaan yang semakin kuat pada suatu cluster. Sebagian besar data memiliki nilai membership yang tinggi pada salah satu cluster, yang menunjukkan pemisahan yang cukup jelas. Namun, terdapat beberapa data dengan nilai membership yang lebih seimbang antara dua cluster, yang mengindikasikan bahwa data tersebut berada pada batas antar cluster. Hal ini menunjukkan bahwa Fuzzy C-Means mampu menangkap ketidakpastian dan overlap dalam data yang tidak dapat diakomodasi oleh metode clustering berbasis hard assignment seperti K-Means.
+
+## Evaluasi Fuzzy C-Means
+```{r}
+#Evaluasi Internal (Silhouette Score)
+sil_fcm <- mean(silhouette(fcm_cluster, dist(data_scaled))[,3])
+
+sil_fcm
+```
+Evaluasi menggunakan Silhouette Score pada metode Fuzzy C-Means menghasilkan nilai sebesar 0.4088, yang menunjukkan kualitas clustering yang cukup baik. Nilai ini hampir setara dengan hasil K-Means dengan 2 cluster, sehingga menunjukkan bahwa Fuzzy C-Means mampu merepresentasikan struktur data dengan baik. Keunggulan utama metode ini terletak pada pendekatan soft clustering, di mana setiap data memiliki derajat keanggotaan pada masing-masing cluster. Hal ini memungkinkan model untuk menangkap adanya overlap antar cluster, sehingga memberikan representasi yang lebih fleksibel dan realistis dibandingkan metode K-Means yang bersifat hard clustering.
+
+```{r}
+#Evaluasi Eksternal (Perbandingan cluster vs label asli)
+table(fcm_cluster, data$Class)
+```
+Hasil evaluasi eksternal pada metode Fuzzy C-Means menunjukkan bahwa cluster yang terbentuk memiliki kesesuaian yang tinggi dengan label asli data. Cluster 1 didominasi oleh kelas Osmancik (2024 data), sedangkan Cluster 2 didominasi oleh kelas Cammeo (1455 data). Jika dibandingkan dengan distribusi data asli, sebagian besar observasi telah berhasil dikelompokkan dengan benar, dengan tingkat kesesuaian yang tinggi pada kedua kelas. Meskipun terdapat sejumlah kecil data yang tertukar antar cluster, hal ini dapat dijelaskan oleh adanya overlap karakteristik antar kelas. Pendekatan soft clustering pada Fuzzy C-Means memungkinkan model untuk menangkap ketidakpastian tersebut dengan lebih baik dibandingkan metode hard clustering seperti K-Means.
+
+# Hasil Evaluasi Semua Metode
+```{r}
+sil_results <- data.frame(
+  Method = c("K-Means 3", "K-Means 2", "Hierarchical", "DBSCAN", "Fuzzy C-Means"),
+  Silhouette = c(sil_kmeans, k_means_sil_2, sil_hc2, sil_db, sil_fcm)
+)
+
+print(sil_results)
+```
+
+```{r}
+barplot(sil_results$Silhouette,
+        names.arg = sil_results$Method,
+        main = "Perbandingan Silhouette Score Antar Metode",
+        ylab = "Silhouette Score",
+        las = 1 )
+```
+Hasil evaluasi menggunakan Silhouette Score menunjukkan bahwa metode K-Means dengan 2 cluster memiliki nilai tertinggi sebesar 0.4099, diikuti sangat dekat oleh Fuzzy C-Means dengan nilai 0.4088. Hal ini menunjukkan bahwa kedua metode mampu menghasilkan struktur cluster yang baik dan representatif terhadap data. Metode Hierarchical Clustering juga memberikan hasil yang cukup baik dengan nilai 0.3955, namun masih berada di bawah K-Means dan Fuzzy C-Means. Sementara itu, K-Means dengan 3 cluster menghasilkan nilai yang lebih rendah, yang mengindikasikan bahwa penggunaan jumlah cluster yang lebih banyak tidak sesuai dengan struktur alami data. Metode DBSCAN tidak dapat dievaluasi menggunakan Silhouette Score karena hanya menghasilkan satu cluster. Secara keseluruhan, hasil ini menunjukkan bahwa jumlah cluster optimal pada dataset adalah dua, dengan K-Means dan Fuzzy C-Means sebagai metode yang memberikan performa terbaik.
+
+# Metode Terbaik
+```{r}
+best_method <- sil_results[which.max(sil_results$Silhouette), ]
+
+cat("\nMetode terbaik berdasarkan Silhouette Score adalah:\n")
+print(best_method)
+```
+Berdasarkan hasil evaluasi menggunakan Silhouette Score, metode K-Means dengan 2 cluster teridentifikasi sebagai metode terbaik dengan nilai sebesar 0.4099. Nilai ini merupakan yang tertinggi dibandingkan metode clustering lainnya, sehingga menunjukkan bahwa K-Means mampu menghasilkan pemisahan cluster yang paling optimal pada dataset. Hasil ini juga konsisten dengan berbagai analisis sebelumnya, termasuk metode Elbow dan Hierarchical Clustering, yang sama-sama mengindikasikan bahwa jumlah cluster optimal adalah dua. Meskipun demikian, metode Fuzzy C-Means menunjukkan performa yang sangat mendekati, sehingga dapat dipertimbangkan sebagai alternatif yang lebih fleksibel dalam menangani data dengan karakteristik overlap.
+```{r}
+fviz_cluster(kmeans_2model,
+             data = data_scaled,
+             geom = "point",
+             ellipse.type = "convex",
+             main = "Visualisasi Hasil Clustering K-Means K=2",
+             ggtheme = theme_minimal())
+```
+Visualisasi hasil K-Means dengan 2 cluster menunjukkan bahwa data terbagi secara jelas menjadi dua kelompok utama, terutama sepanjang Dimensi 1 yang menjelaskan sebagian besar variasi data. Cluster pertama terdistribusi pada sisi kiri, sedangkan cluster kedua berada pada sisi kanan, dengan batas pemisahan yang relatif tegas dan hanya sedikit overlap di area tengah. Pola ini menunjukkan bahwa struktur alami data memang terdiri dari dua kelompok yang berbeda, sehingga K-Means dengan dua cluster mampu merepresentasikan data secara optimal. 
+
+Dengan demikian, K-Means dipilih sebagai metode terbaik dalam penelitian ini karena kesederhanaan dan performanya yang optimal, sementara Fuzzy C-Means direkomendasikan sebagai pendekatan alternatif untuk analisis yang membutuhkan interpretasi lebih mendalam terhadap data yang memiliki ketidakpastian.
+
+
+
+
+
+
+
+
+
+
